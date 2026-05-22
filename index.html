@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#26625a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="训练记录" />
+    <title>训练记录</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>训练记录</h1>
+          <p>简单记录动作、重量和每组次数。</p>
+        </div>
+        <button class="icon-button" id="exportBtn" type="button" title="导出数据" aria-label="导出数据">
+          <span aria-hidden="true">↓</span>
+        </button>
+      </header>
+
+      <section class="stats-grid" aria-label="训练概览">
+        <article>
+          <span>训练次数</span>
+          <strong id="totalSessions">0</strong>
+        </article>
+        <article>
+          <span>健身天数</span>
+          <strong id="totalWorkoutDays">0</strong>
+        </article>
+        <article>
+          <span>近30天健身天数</span>
+          <strong id="recent30WorkoutDays">0</strong>
+        </article>
+        <article>
+          <span>本月次数</span>
+          <strong id="monthSessions">0</strong>
+        </article>
+        <article>
+          <span>记录动作</span>
+          <strong id="totalExercises">0</strong>
+        </article>
+        <article>
+          <span>无烟天数</span>
+          <strong id="smokeFreeDays">-</strong>
+        </article>
+        <article>
+          <span>体重变化</span>
+          <strong id="weightChange">-</strong>
+        </article>
+      </section>
+
+      <section class="trend-panel" aria-labelledby="trendTitle">
+        <div class="section-head">
+          <h2 id="trendTitle">体重趋势</h2>
+          <span id="weightTrendHint" class="trend-hint">至少记录 2 次体重后显示趋势</span>
+        </div>
+        <canvas id="weightTrendCanvas" width="880" height="220" aria-label="体重趋势图"></canvas>
+      </section>
+
+      <section class="input-panel" aria-labelledby="newSessionTitle">
+        <div class="section-head">
+          <h2 id="newSessionTitle">新增训练</h2>
+          <button id="addExerciseBtn" type="button">添加动作</button>
+        </div>
+
+        <form id="sessionForm">
+          <label class="field">
+            <span>日期</span>
+            <input id="sessionDate" name="sessionDate" type="date" required />
+          </label>
+
+          <fieldset class="optional-group" aria-label="可选记录">
+            <legend>可选记录</legend>
+            <label class="toggle-row">
+              <input id="trackWeightToggle" type="checkbox" />
+              <span>记录本次体重</span>
+            </label>
+            <label class="field optional-field is-hidden" id="weightField">
+              <span>体重 (kg)</span>
+              <input id="sessionWeight" type="number" min="20" max="300" step="0.1" placeholder="72.5" />
+            </label>
+
+            <label class="toggle-row">
+              <input id="trackQuitToggle" type="checkbox" />
+              <span>记录戒烟开始时间</span>
+            </label>
+            <label class="field optional-field is-hidden" id="quitDateField">
+              <span>戒烟开始日期</span>
+              <input id="quitStartDate" type="date" />
+            </label>
+            <p class="optional-tip">这两项都可选，戒烟日期只需设置一次，后续会自动统计无烟天数。</p>
+          </fieldset>
+
+          <div id="exerciseList" class="exercise-list"></div>
+
+          <label class="field">
+            <span>备注</span>
+            <textarea id="sessionNote" rows="2" placeholder="比如：状态不错、最后一组接近力竭"></textarea>
+          </label>
+
+          <div class="form-actions">
+            <button class="primary" type="submit">保存训练</button>
+            <button id="clearFormBtn" type="button">清空</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="history-panel" aria-labelledby="historyTitle">
+        <div class="section-head">
+          <h2 id="historyTitle">历史记录</h2>
+          <input id="searchInput" type="search" placeholder="搜索动作" aria-label="搜索动作" />
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+    </main>
+
+    <template id="exerciseTemplate">
+      <article class="exercise-row">
+        <div class="row-grid">
+          <label class="field">
+            <span>动作</span>
+            <input class="exercise-name" type="text" placeholder="哑铃卧推" required />
+          </label>
+          <label class="field">
+            <span>重量</span>
+            <input class="exercise-weight" type="text" placeholder="30kg" />
+          </label>
+          <label class="field reps-field">
+            <span>次数</span>
+            <input class="exercise-reps" type="text" placeholder="12/12/12/10" required />
+          </label>
+          <button class="remove-exercise" type="button" title="删除动作" aria-label="删除动作">×</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
