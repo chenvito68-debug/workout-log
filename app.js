@@ -59,7 +59,7 @@ const starterSessions = [
   }
 ];
 
-let sessions = loadSessions();
+let sessions = sanitizeLoadedSessions(loadSessions());
 let meta = loadMeta();
 let editingId = null;
 
@@ -125,6 +125,26 @@ function loadSessions() {
   } catch {
     return [];
   }
+}
+
+function sanitizeLoadedSessions(rawSessions) {
+  if (!Array.isArray(rawSessions)) {
+    return [];
+  }
+
+  return rawSessions.map((session) => {
+    if (!session || typeof session !== "object") {
+      return session;
+    }
+    const normalized = { ...session };
+    const weightValue = normalizeWeight(normalized.weight ?? "");
+    if (weightValue) {
+      normalized.weight = weightValue;
+    } else {
+      delete normalized.weight;
+    }
+    return normalized;
+  });
 }
 
 function loadMeta() {
@@ -254,7 +274,7 @@ function normalizeReps(value) {
 
 function normalizeWeight(value) {
   const parsed = parseWeight(value);
-  if (!Number.isFinite(parsed)) {
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     return "";
   }
   return String(Number(parsed.toFixed(1)));
@@ -1330,6 +1350,22 @@ function isDateInRange(isoDate, range) {
 }
 
 function parseExerciseFromLine(line, fallbackName) {
+  const compact = String(line || "").replace(/\s+/g, "");
+
+  // Keep lightweight labels like "金5" as one standalone entry.
+  if (/^金\d+(?:\.\d+)?$/i.test(compact)) {
+    return { name: compact, weight: "", reps: "" };
+  }
+
+  // Keep run records as one line entry.
+  if (/^(?:跑步)?\d+(?:\.\d+)?km$/i.test(compact)) {
+    const name = compact.startsWith("跑步") ? compact : `跑步${compact}`;
+    return { name, weight: "", reps: "" };
+  }
+  if (/^\d+(?:\.\d+)?公里$/.test(compact)) {
+    return { name: `跑步${compact}`, weight: "", reps: "" };
+  }
+
   const weightMatch = line.match(/(\d+(?:\.\d+)?)\s*kg/i);
   let name = "";
   let weight = "";
