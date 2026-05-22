@@ -80,6 +80,11 @@ const weightTrendCanvas = document.querySelector("#weightTrendCanvas");
 const weightTrendHint = document.querySelector("#weightTrendHint");
 const appVersionText = document.querySelector("#appVersion");
 const appUpdatedAtText = document.querySelector("#appUpdatedAt");
+const importJsonBtn = document.querySelector("#importJsonBtn");
+const importFileInput = document.querySelector("#importFileInput");
+const bulkInput = document.querySelector("#bulkInput");
+const bulkImportBtn = document.querySelector("#bulkImportBtn");
+const bulkClearBtn = document.querySelector("#bulkClearBtn");
 
 document.querySelector("#addExerciseBtn").addEventListener("click", () => addExerciseRow());
 document.querySelector("#clearFormBtn").addEventListener("click", resetForm);
@@ -90,6 +95,12 @@ trackWeightToggle.addEventListener("change", handleWeightToggleChange);
 trackQuitToggle.addEventListener("change", handleQuitToggleChange);
 quitStartDateInput.addEventListener("change", handleQuitDateChange);
 window.addEventListener("resize", renderWeightTrend);
+importJsonBtn.addEventListener("click", () => importFileInput.click());
+importFileInput.addEventListener("change", handleImportFileChange);
+bulkImportBtn.addEventListener("click", handleBulkImport);
+bulkClearBtn.addEventListener("click", () => {
+  bulkInput.value = "";
+});
 
 setToday();
 hydrateOptionalState();
@@ -686,14 +697,336 @@ function formatWeight(value) {
 }
 
 function exportData() {
-  const exportPayload = { meta, sessions };
-  const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
+  const text = buildPlainTextExport();
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `workout-log-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `workout-log-${new Date().toISOString().slice(0, 10)}.txt`;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function buildPlainTextExport() {
+  const sorted = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
+  const lines = [];
+
+  sorted.forEach((session, sessionIndex) => {
+    lines.push(formatDateShort(session.date));
+
+    session.exercises.forEach((exercise) => {
+      lines.push(`• ${formatExerciseLine(exercise)}`);
+    });
+
+    if (session.weight) {
+      lines.push(`• 体重${formatWeight(session.weight)}`);
+    }
+
+    if (session.note) {
+      lines.push(`• 备注：${session.note}`);
+    }
+
+    if (sessionIndex !== sorted.length - 1) {
+      lines.push("");
+    }
+  });
+
+  return lines.join("\n");
+}
+
+function formatExerciseLine(exercise) {
+  const name = (exercise.name || "").trim();
+  const weight = (exercise.weight || "").trim();
+  const reps = normalizeExportReps(exercise.reps || "");
+
+  if (name && weight && reps) {
+    return `${name}${weight}${reps}`;
+  }
+  if (name && weight) {
+    return `${name}${weight}`;
+  }
+  if (name && reps) {
+    return `${name}${reps}`;
+  }
+  if (weight && reps) {
+    return `${weight}${reps}`;
+  }
+  return name || weight || reps || "-";
+}
+
+function normalizeExportReps(reps) {
+  return String(reps).replaceAll("/", "+").trim();
+}
+
+function formatDateShort(value) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) {
+    return value;
+  }
+  return `${parsed.getMonth() + 1}.${parsed.getDate()}`;
+}
+
+function handleImportFileChange(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      const payload = normalizeImportPayload(parsed);
+      if (!payload.sessions.length) {
+        alert("导入文件里没有可用训练记录。");
+        return;
+      }
+      mergeImportedData(payload);
+      alert(`导入完成：新增 ${payload.sessions.length} 条训练记录。`);
+    } catch {
+      alert("导入失败：文件格式不是有效 JSON。");
+    } finally {
+      importFileInput.value = "";
+    }
+  };
+  reader.onerror = () => {
+    alert("导入失败：读取文件时出错。");
+    importFileInput.value = "";
+  };
+  reader.readAsText(file, "utf-8");
+}
+
+function normalizeImportPayload(parsed) {
+  const sourceMeta = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed.meta : null;
+  const sourceSessions = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray(parsed.sessions)
+      ? parsed.sessions
+      : [];
+
+  const normalizedSessions = sourceSessions
+    .map((session) => normalizeSession(session))
+    .filter((session) => session !== null);
+
+  return {
+    meta: normalizeMeta(sourceMeta),
+    sessions: normalizedSessions
+  };
+}
+
+function normalizeMeta(rawMeta) {
+  if (!rawMeta || typeof rawMeta !== "object") {
+    return null;
+  }
+  return {
+    trackWeight: Boolean(rawMeta.trackWeight),
+    trackQuit: Boolean(rawMeta.trackQuit),
+    quitStartDate: typeof rawMeta.quitStartDate === "string" ? rawMeta.quitStartDate : ""
+  };
+}
+
+function normalizeSession(rawSession) {
+  if (!rawSession || typeof rawSession !== "object") {
+    return null;
+  }
+
+  const dateText = typeof rawSession.date === "string" ? rawSession.date.trim() : "";
+  if (!parseDateOnly(dateText)) {
+    return null;
+  }
+
+  const rawExercises = Array.isArray(rawSession.exercises) ? rawSession.exercises : [];
+  const exercises = rawExercises
+    .map((exercise) => normalizeExercise(exercise))
+    .filter((exercise) => exercise !== null);
+  if (!exercises.length) {
+    return null;
+  }
+
+  const normalized = {
+    id: crypto.randomUUID(),
+    date: dateText,
+    note: typeof rawSession.note === "string" ? rawSession.note.trim() : "",
+    exercises
+  };
+
+  const weightValue = normalizeWeight(rawSession.weight ?? "");
+  if (weightValue) {
+    normalized.weight = weightValue;
+  }
+
+  return normalized;
+}
+
+function normalizeExercise(rawExercise) {
+  if (!rawExercise || typeof rawExercise !== "object") {
+    return null;
+  }
+  const name = typeof rawExercise.name === "string" ? rawExercise.name.trim() : "";
+  const weight = typeof rawExercise.weight === "string" ? rawExercise.weight.trim() : "";
+  const reps = normalizeReps(typeof rawExercise.reps === "string" ? rawExercise.reps : "");
+  if (!name && !weight && !reps) {
+    return null;
+  }
+  return { name, weight, reps };
+}
+
+function mergeImportedData(payload) {
+  if (payload.meta) {
+    meta = {
+      ...meta,
+      ...payload.meta
+    };
+    persistMeta();
+    hydrateOptionalState();
+  }
+
+  sessions = [...payload.sessions, ...sessions];
+  persistSessions();
+  render();
+}
+
+function handleBulkImport() {
+  const text = bulkInput.value.trim();
+  if (!text) {
+    alert("请先粘贴要导入的训练文本。");
+    return;
+  }
+
+  const parsedSessions = parseBulkTextToSessions(text);
+  if (!parsedSessions.length) {
+    alert("没有解析到可导入的训练数据，请检查文本格式。");
+    return;
+  }
+
+  mergeImportedData({ meta: null, sessions: parsedSessions });
+  bulkInput.value = "";
+  alert(`导入完成：新增 ${parsedSessions.length} 条训练记录。`);
+}
+
+function parseBulkTextToSessions(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const sessionsByDate = new Map();
+  let currentDate = "";
+  let lastExerciseName = "";
+
+  lines.forEach((line) => {
+    const dateText = parseLooseDate(line);
+    if (dateText) {
+      currentDate = dateText;
+      lastExerciseName = "";
+      if (!sessionsByDate.has(currentDate)) {
+        sessionsByDate.set(currentDate, {
+          id: crypto.randomUUID(),
+          date: currentDate,
+          note: "",
+          exercises: []
+        });
+      }
+      return;
+    }
+
+    const cleaned = cleanExerciseLine(line);
+    if (!cleaned) {
+      return;
+    }
+
+    if (!currentDate) {
+      currentDate = new Date().toISOString().slice(0, 10);
+      sessionsByDate.set(currentDate, {
+        id: crypto.randomUUID(),
+        date: currentDate,
+        note: "",
+        exercises: []
+      });
+    }
+
+    const parsed = parseExerciseFromLine(cleaned, lastExerciseName);
+    if (!parsed) {
+      return;
+    }
+    lastExerciseName = parsed.name || lastExerciseName;
+    sessionsByDate.get(currentDate).exercises.push({
+      name: parsed.name,
+      weight: parsed.weight,
+      reps: parsed.reps
+    });
+  });
+
+  return [...sessionsByDate.values()]
+    .map((session) => normalizeSession(session))
+    .filter((session) => session !== null);
+}
+
+function cleanExerciseLine(line) {
+  return line.replace(/^[•*·\-]+\s*/, "").trim();
+}
+
+function parseLooseDate(line) {
+  const match = line.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/);
+  if (!match) {
+    return "";
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const explicitYear = match[3] ? Number(match[3]) : null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return "";
+  }
+
+  let year = explicitYear;
+  if (year !== null && year < 100) {
+    year += 2000;
+  }
+  if (year === null) {
+    const now = new Date();
+    year = now.getFullYear();
+    const candidate = new Date(year, month - 1, day);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (candidate > today) {
+      year -= 1;
+    }
+  }
+
+  const date = new Date(year, month - 1, day);
+  if (date.getMonth() + 1 !== month || date.getDate() !== day || date.getFullYear() !== year) {
+    return "";
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function parseExerciseFromLine(line, fallbackName) {
+  const weightMatch = line.match(/(\d+(?:\.\d+)?)\s*kg/i);
+  let name = "";
+  let weight = "";
+  let reps = "";
+
+  if (weightMatch && weightMatch.index !== undefined) {
+    const before = line.slice(0, weightMatch.index).trim();
+    const after = line.slice(weightMatch.index + weightMatch[0].length).trim();
+    name = before || fallbackName;
+    weight = `${weightMatch[1]}kg`;
+    reps = normalizeReps((after.match(/[\d+\s/]+/) || [""])[0]);
+  } else {
+    const repsTail = line.match(/(\d+(?:\s*[+/]\s*\d+)*)\s*$/);
+    if (repsTail && repsTail.index !== undefined) {
+      name = line.slice(0, repsTail.index).trim() || fallbackName;
+      reps = normalizeReps(repsTail[1]);
+    } else {
+      name = line.trim() || fallbackName;
+    }
+  }
+
+  if (!name) {
+    return null;
+  }
+
+  return { name, weight, reps };
 }
 
 function escapeHtml(value) {
