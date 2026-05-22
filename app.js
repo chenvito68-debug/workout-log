@@ -853,7 +853,7 @@ function handleBulkFileChange(event) {
     }
 
     bulkInput.value = text;
-    const parsedSessions = parseBulkTextToSessions(text);
+    const parsedSessions = parseBulkTextToSessions(text, { fileName: file.name });
     if (!parsedSessions.length) {
       alert("文件已读取，但没有解析到可导入记录。请检查文本格式。");
       bulkFileInput.value = "";
@@ -1027,12 +1027,15 @@ function handleBulkImport() {
   alert(`导入完成：新增 ${parsedSessions.length} 条训练记录。`);
 }
 
-function parseBulkTextToSessions(text) {
+function parseBulkTextToSessions(text, options = {}) {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
 
+  const dateRange =
+    parseDateRangeFromName(options.fileName || "") ||
+    parseDateRangeFromName(lines[0] || "");
   const trend = inferBulkDateTrend(lines);
   const sessionsByDate = new Map();
   let currentDate = "";
@@ -1040,7 +1043,8 @@ function parseBulkTextToSessions(text) {
   const dateCtx = {
     trend,
     currentYear: null,
-    previousDate: ""
+    previousDate: "",
+    range: dateRange
   };
 
   lines.forEach((line) => {
@@ -1187,36 +1191,112 @@ function parseBulkDateLine(line, ctx) {
 
   let year = token.year;
   if (!year) {
-    if (ctx.currentYear === null) {
-      const now = new Date();
-      year = now.getFullYear();
-    } else {
-      year = ctx.currentYear;
-    }
-
-    if (ctx.previousDate) {
-      const prev = parseDateOnly(ctx.previousDate);
-      if (prev) {
-        const prevMd = (prev.getMonth() + 1) * 100 + prev.getDate();
-        const currentMd = token.month * 100 + token.day;
-        if (ctx.trend === "desc" && currentMd > prevMd + 100) {
-          year -= 1;
-        }
-        if (ctx.trend === "asc" && currentMd < prevMd - 100) {
-          year += 1;
-        }
-      }
-    }
+    year = inferYearForBulkDate(token.month, token.day, ctx);
   }
 
   const isoDate = `${year}-${String(token.month).padStart(2, "0")}-${String(token.day).padStart(2, "0")}`;
   if (!parseDateOnly(isoDate)) {
     return null;
   }
+  if (ctx.range && !isDateInRange(isoDate, ctx.range)) {
+    return null;
+  }
 
   ctx.currentYear = year;
   ctx.previousDate = isoDate;
   return { date: isoDate, rest: token.rest };
+}
+
+function inferYearForBulkDate(month, day, ctx) {
+  const now = new Date();
+  const defaultYear = ctx.currentYear ?? now.getFullYear();
+  const candidateYears = getCandidateYearsForBulk(ctx.range, defaultYear);
+  const candidates = candidateYears
+    .map((year) => ({
+      year,
+      iso: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    }))
+    .filter((item) => parseDateOnly(item.iso))
+    .filter((item) => !ctx.range || isDateInRange(item.iso, ctx.range));
+
+  if (!candidates.length) {
+    return defaultYear;
+  }
+
+  if (!ctx.previousDate) {
+    if (ctx.range) {
+      return ctx.trend === "asc" ? candidates[0].year : candidates[candidates.length - 1].year;
+    }
+    return candidates[0].year;
+  }
+
+  const previousMs = Date.parse(ctx.previousDate);
+  const ranked = candidates
+    .map((item) => ({
+      ...item,
+      diff: Date.parse(item.iso) - previousMs
+    }))
+    .sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff));
+
+  if (ctx.trend === "desc") {
+    const preferred = ranked.filter((item) => item.diff <= 0);
+    return (preferred[0] || ranked[0]).year;
+  }
+  const preferred = ranked.filter((item) => item.diff >= 0);
+  return (preferred[0] || ranked[0]).year;
+}
+
+function getCandidateYearsForBulk(range, fallbackYear) {
+  if (!range) {
+    return [fallbackYear - 1, fallbackYear, fallbackYear + 1];
+  }
+  const years = [];
+  for (let year = range.startYear; year <= range.endYear; year += 1) {
+    years.push(year);
+  }
+  return years;
+}
+
+function parseDateRangeFromName(text) {
+  const normalized = String(text || "").replace(/\s+/g, "");
+  const match = normalized.match(
+    /(\d{4})[.\-\/](\d{1,2})(?:[.\-\/](\d{1,2}))?\s*-\s*(\d{4})[.\-\/](\d{1,2})(?:[.\-\/](\d{1,2}))?/
+  );
+  if (!match) {
+    return null;
+  }
+
+  const startYear = Number(match[1]);
+  const startMonth = Number(match[2]);
+  const startDay = Number(match[3] || 1);
+  const endYear = Number(match[4]);
+  const endMonth = Number(match[5]);
+  const endDay = Number(match[6] || daysInMonth(endYear, endMonth));
+
+  const startDate = `${startYear}-${String(startMonth).padStart(2, "0")}-${String(startDay).padStart(2, "0")}`;
+  const endDate = `${endYear}-${String(endMonth).padStart(2, "0")}-${String(endDay).padStart(2, "0")}`;
+  if (!parseDateOnly(startDate) || !parseDateOnly(endDate)) {
+    return null;
+  }
+  if (Date.parse(startDate) > Date.parse(endDate)) {
+    return null;
+  }
+
+  return {
+    startYear,
+    endYear,
+    startDate,
+    endDate
+  };
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function isDateInRange(isoDate, range) {
+  const time = Date.parse(isoDate);
+  return time >= Date.parse(range.startDate) && time <= Date.parse(range.endDate);
 }
 
 function parseExerciseFromLine(line, fallbackName) {
