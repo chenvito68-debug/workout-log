@@ -80,11 +80,13 @@ const weightTrendCanvas = document.querySelector("#weightTrendCanvas");
 const weightTrendHint = document.querySelector("#weightTrendHint");
 const appVersionText = document.querySelector("#appVersion");
 const appUpdatedAtText = document.querySelector("#appUpdatedAt");
+const appEnvironmentText = document.querySelector("#appEnvironment");
 const importFileInput = document.querySelector("#importFileInput");
 const bulkInput = document.querySelector("#bulkInput");
 const bulkImportBtn = document.querySelector("#bulkImportBtn");
 const bulkFileInput = document.querySelector("#bulkFileInput");
 const bulkClearBtn = document.querySelector("#bulkClearBtn");
+const syncVersionBtn = document.querySelector("#syncVersionBtn");
 
 document.querySelector("#addExerciseBtn").addEventListener("click", () => addExerciseRow());
 document.querySelector("#clearFormBtn").addEventListener("click", resetForm);
@@ -98,6 +100,7 @@ window.addEventListener("resize", renderWeightTrend);
 importFileInput.addEventListener("change", handleImportFileChange);
 bulkImportBtn.addEventListener("click", handleBulkImport);
 bulkFileInput.addEventListener("change", handleBulkFileChange);
+syncVersionBtn.addEventListener("click", handleVersionSync);
 bulkClearBtn.addEventListener("click", () => {
   bulkInput.value = "";
 });
@@ -570,9 +573,37 @@ function registerServiceWorker() {
   }
   const pageVersion = getPageVersion();
   const swUrl = `./sw.js?v=${encodeURIComponent(pageVersion)}`;
-  navigator.serviceWorker.register(swUrl).catch(() => {
-    // Silent fail: app can still run without offline caching.
+  let hasRefreshed = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hasRefreshed) {
+      return;
+    }
+    hasRefreshed = true;
+    window.location.reload();
   });
+
+  navigator.serviceWorker
+    .register(swUrl)
+    .then((registration) => {
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) {
+          return;
+        }
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) {
+            worker.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+      });
+    })
+    .catch(() => {
+      // Silent fail: app can still run without offline caching.
+    });
 }
 
 function getPageVersion() {
@@ -596,6 +627,9 @@ function renderBuildInfo() {
 
   appVersionText.textContent = `版本：v${formatVersionLabel(timestamp)}`;
   appUpdatedAtText.textContent = `更新时间：${formatUpdatedAt(timestamp)}`;
+  if (appEnvironmentText) {
+    appEnvironmentText.textContent = `环境：${getEnvironmentLabel()}`;
+  }
 }
 
 function getPageTimestamp() {
@@ -629,6 +663,13 @@ function formatUpdatedAt(timestamp) {
   const hh = String(date.getHours()).padStart(2, "0");
   const min = String(date.getMinutes()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
+function getEnvironmentLabel() {
+  if (location.protocol.startsWith("http")) {
+    return `线上 ${location.host}`;
+  }
+  return "本地文件 file://";
 }
 
 function renderHistory(items) {
@@ -830,6 +871,29 @@ function handleBulkFileChange(event) {
   reader.readAsText(file, "utf-8");
 }
 
+async function handleVersionSync() {
+  if (!location.protocol.startsWith("http")) {
+    alert("当前是本地文件模式。请通过线上链接打开后再检查更新。");
+    return;
+  }
+  if (!("serviceWorker" in navigator)) {
+    window.location.reload();
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (registration) {
+      await registration.update();
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+    }
+  } finally {
+    window.location.reload();
+  }
+}
+
 function normalizeImportPayload(parsed) {
   const sourceMeta = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed.meta : null;
   const sourceSessions = Array.isArray(parsed)
@@ -915,7 +979,32 @@ function mergeImportedData(payload) {
     hydrateOptionalState();
   }
 
-  sessions = [...payload.sessions, ...sessions];
+  payload.sessions.forEach((importedSession) => {
+    const existing = sessions.find((session) => session.date === importedSession.date);
+    if (!existing) {
+      sessions.push(importedSession);
+      return;
+    }
+
+    const existingSignatures = new Set(
+      existing.exercises.map((exercise) => buildExerciseSignature(exercise))
+    );
+    importedSession.exercises.forEach((exercise) => {
+      const signature = buildExerciseSignature(exercise);
+      if (!existingSignatures.has(signature)) {
+        existing.exercises.push(exercise);
+        existingSignatures.add(signature);
+      }
+    });
+
+    if (!existing.weight && importedSession.weight) {
+      existing.weight = importedSession.weight;
+    }
+    if (importedSession.note) {
+      existing.note = mergeNotes(existing.note, importedSession.note);
+    }
+  });
+
   persistSessions();
   render();
 }
@@ -944,14 +1033,24 @@ function parseBulkTextToSessions(text) {
     .map((line) => line.trim())
     .filter(Boolean);
 
+  const trend = inferBulkDateTrend(lines);
   const sessionsByDate = new Map();
   let currentDate = "";
   let lastExerciseName = "";
+  const dateCtx = {
+    trend,
+    currentYear: null,
+    previousDate: ""
+  };
 
   lines.forEach((line) => {
-    const dateText = parseLooseDate(line);
-    if (dateText) {
-      currentDate = dateText;
+    if (shouldSkipBulkLine(line)) {
+      return;
+    }
+
+    const parsedDate = parseBulkDateLine(line, dateCtx);
+    if (parsedDate) {
+      currentDate = parsedDate.date;
       lastExerciseName = "";
       if (!sessionsByDate.has(currentDate)) {
         sessionsByDate.set(currentDate, {
@@ -960,6 +1059,20 @@ function parseBulkTextToSessions(text) {
           note: "",
           exercises: []
         });
+      }
+      if (parsedDate.rest) {
+        const firstEntry = cleanExerciseLine(parsedDate.rest);
+        if (firstEntry) {
+          const parsed = parseExerciseFromLine(firstEntry, lastExerciseName);
+          if (parsed) {
+            lastExerciseName = parsed.name || lastExerciseName;
+            sessionsByDate.get(currentDate).exercises.push({
+              name: parsed.name,
+              weight: parsed.weight,
+              reps: parsed.reps
+            });
+          }
+        }
       }
       return;
     }
@@ -970,13 +1083,7 @@ function parseBulkTextToSessions(text) {
     }
 
     if (!currentDate) {
-      currentDate = new Date().toISOString().slice(0, 10);
-      sessionsByDate.set(currentDate, {
-        id: crypto.randomUUID(),
-        date: currentDate,
-        note: "",
-        exercises: []
-      });
+      return;
     }
 
     const parsed = parseExerciseFromLine(cleaned, lastExerciseName);
@@ -1000,38 +1107,116 @@ function cleanExerciseLine(line) {
   return line.replace(/^[•*·\-]+\s*/, "").trim();
 }
 
-function parseLooseDate(line) {
-  const match = line.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/);
+function shouldSkipBulkLine(line) {
+  if (!line) {
+    return true;
+  }
+  if (/^#+\s*/.test(line)) {
+    return true;
+  }
+  if (/^日记$/i.test(line)) {
+    return true;
+  }
+  if (/^\d{4}[./]\d{1,2}[./]\d{1,2}\s*-\s*\d{4}[./]\d{1,2}(?:[./]\d{1,2})?$/.test(line)) {
+    return true;
+  }
+  return false;
+}
+
+function inferBulkDateTrend(lines) {
+  const series = [];
+  lines.forEach((line) => {
+    const token = parseBulkDateToken(line);
+    if (!token) {
+      return;
+    }
+    series.push(token.month * 100 + token.day);
+  });
+
+  let inc = 0;
+  let dec = 0;
+  for (let i = 1; i < series.length; i += 1) {
+    if (series[i] > series[i - 1]) {
+      inc += 1;
+    } else if (series[i] < series[i - 1]) {
+      dec += 1;
+    }
+  }
+  return inc > dec ? "asc" : "desc";
+}
+
+function parseBulkDateToken(line) {
+  const match = line.match(
+    /^(?:(\d{4})[./-])?(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?:\s+(\d{4}))?[。.\s]*(.*)$/
+  );
   if (!match) {
-    return "";
+    return null;
   }
 
-  const month = Number(match[1]);
-  const day = Number(match[2]);
-  const explicitYear = match[3] ? Number(match[3]) : null;
+  const month = Number(match[2]);
+  const day = Number(match[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) {
-    return "";
+    return null;
   }
 
-  let year = explicitYear;
+  let year = null;
+  if (match[1]) {
+    year = Number(match[1]);
+  } else if (match[4]) {
+    year = Number(match[4]);
+  } else if (match[5]) {
+    year = Number(match[5]);
+  }
   if (year !== null && year < 100) {
     year += 2000;
   }
-  if (year === null) {
-    const now = new Date();
-    year = now.getFullYear();
-    const candidate = new Date(year, month - 1, day);
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (candidate > today) {
-      year -= 1;
+
+  return {
+    year,
+    month,
+    day,
+    rest: (match[6] || "").trim()
+  };
+}
+
+function parseBulkDateLine(line, ctx) {
+  const token = parseBulkDateToken(line);
+  if (!token) {
+    return null;
+  }
+
+  let year = token.year;
+  if (!year) {
+    if (ctx.currentYear === null) {
+      const now = new Date();
+      year = now.getFullYear();
+    } else {
+      year = ctx.currentYear;
+    }
+
+    if (ctx.previousDate) {
+      const prev = parseDateOnly(ctx.previousDate);
+      if (prev) {
+        const prevMd = (prev.getMonth() + 1) * 100 + prev.getDate();
+        const currentMd = token.month * 100 + token.day;
+        if (ctx.trend === "desc" && currentMd > prevMd + 100) {
+          year -= 1;
+        }
+        if (ctx.trend === "asc" && currentMd < prevMd - 100) {
+          year += 1;
+        }
+      }
     }
   }
 
-  const date = new Date(year, month - 1, day);
-  if (date.getMonth() + 1 !== month || date.getDate() !== day || date.getFullYear() !== year) {
-    return "";
+  const isoDate = `${year}-${String(token.month).padStart(2, "0")}-${String(token.day).padStart(2, "0")}`;
+  if (!parseDateOnly(isoDate)) {
+    return null;
   }
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  ctx.currentYear = year;
+  ctx.previousDate = isoDate;
+  return { date: isoDate, rest: token.rest };
 }
 
 function parseExerciseFromLine(line, fallbackName) {
@@ -1061,6 +1246,26 @@ function parseExerciseFromLine(line, fallbackName) {
   }
 
   return { name, weight, reps };
+}
+
+function buildExerciseSignature(exercise) {
+  return [
+    (exercise.name || "").trim(),
+    (exercise.weight || "").trim(),
+    normalizeReps(exercise.reps || "")
+  ].join("|");
+}
+
+function mergeNotes(base, extra) {
+  const a = (base || "").trim();
+  const b = (extra || "").trim();
+  if (!a) {
+    return b;
+  }
+  if (!b || a.includes(b)) {
+    return a;
+  }
+  return `${a} | ${b}`;
 }
 
 function escapeHtml(value) {

@@ -12,6 +12,14 @@ const STATIC_ASSETS = [
   "./icon-512.png"
 ];
 
+const APP_SHELL_PATHS = new Set([
+  "/",
+  "/index.html",
+  "/app.js",
+  "/styles.css",
+  "/manifest.webmanifest"
+]);
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
@@ -32,23 +40,66 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") {
     return;
   }
 
+  const requestUrl = new URL(event.request.url);
+  const cacheKey = getCacheKey(event.request);
+
+  if (isAppShellRequest(requestUrl)) {
+    event.respondWith(
+      fetch(event.request, { cache: "no-store" })
+        .then((response) => {
+          const cloned = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, cloned));
+          return response;
+        })
+        .catch(() => caches.match(cacheKey).then((cached) => cached || caches.match("./index.html")))
+    );
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(cacheKey).then((cached) => {
       if (cached) {
         return cached;
       }
-      return fetch(event.request)
-        .then((response) => {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cloned));
-          return response;
-        })
-        .catch(() => caches.match("./index.html"));
+      return fetch(event.request).then((response) => {
+        const cloned = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, cloned));
+        return response;
+      });
     })
   );
 });
+
+function isAppShellRequest(url) {
+  if (url.origin !== self.location.origin) {
+    return false;
+  }
+  const pathname = url.pathname || "/";
+  if (APP_SHELL_PATHS.has(pathname)) {
+    return true;
+  }
+  if (pathname.endsWith("/")) {
+    return true;
+  }
+  return false;
+}
+
+function getCacheKey(request) {
+  const url = new URL(request.url);
+  if (!isAppShellRequest(url)) {
+    return request;
+  }
+  const normalized = `${url.origin}${url.pathname}`;
+  return new Request(normalized, { method: "GET" });
+}
