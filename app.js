@@ -822,8 +822,8 @@ function handleImportFileChange(event) {
         alert("导入文件里没有可用训练记录。");
         return;
       }
-      mergeImportedData(payload);
-      alert(`导入完成：新增 ${payload.sessions.length} 条训练记录。`);
+      const result = mergeImportedData(payload);
+      alert(buildImportSummaryMessage(result, "JSON 导入完成"));
     } catch {
       alert("导入失败：文件格式不是有效 JSON。");
     } finally {
@@ -860,8 +860,8 @@ function handleBulkFileChange(event) {
       return;
     }
 
-    mergeImportedData({ meta: null, sessions: parsedSessions });
-    alert(`文件导入完成：新增 ${parsedSessions.length} 条训练记录。`);
+    const result = mergeImportedData({ meta: null, sessions: parsedSessions });
+    alert(buildImportSummaryMessage(result, "文件导入完成"));
     bulkFileInput.value = "";
   };
   reader.onerror = () => {
@@ -937,7 +937,8 @@ function normalizeSession(rawSession) {
   const exercises = rawExercises
     .map((exercise) => normalizeExercise(exercise))
     .filter((exercise) => exercise !== null);
-  if (!exercises.length) {
+  const dedupedExercises = dedupeExercises(exercises);
+  if (!dedupedExercises.length) {
     return null;
   }
 
@@ -945,7 +946,7 @@ function normalizeSession(rawSession) {
     id: crypto.randomUUID(),
     date: dateText,
     note: typeof rawSession.note === "string" ? rawSession.note.trim() : "",
-    exercises
+    exercises: dedupedExercises
   };
 
   const weightValue = normalizeWeight(rawSession.weight ?? "");
@@ -970,6 +971,16 @@ function normalizeExercise(rawExercise) {
 }
 
 function mergeImportedData(payload) {
+  const result = {
+    importedSessions: payload.sessions.length,
+    addedDays: 0,
+    addedExercises: 0,
+    updatedWeights: 0,
+    updatedNotes: 0,
+    skippedSessions: 0,
+    skippedExercises: 0
+  };
+
   if (payload.meta) {
     meta = {
       ...meta,
@@ -980,9 +991,12 @@ function mergeImportedData(payload) {
   }
 
   payload.sessions.forEach((importedSession) => {
+    let sessionChanged = false;
     const existing = sessions.find((session) => session.date === importedSession.date);
     if (!existing) {
       sessions.push(importedSession);
+      result.addedDays += 1;
+      result.addedExercises += importedSession.exercises.length;
       return;
     }
 
@@ -994,19 +1008,35 @@ function mergeImportedData(payload) {
       if (!existingSignatures.has(signature)) {
         existing.exercises.push(exercise);
         existingSignatures.add(signature);
+        sessionChanged = true;
+        result.addedExercises += 1;
+      } else {
+        result.skippedExercises += 1;
       }
     });
 
     if (!existing.weight && importedSession.weight) {
       existing.weight = importedSession.weight;
+      sessionChanged = true;
+      result.updatedWeights += 1;
     }
     if (importedSession.note) {
-      existing.note = mergeNotes(existing.note, importedSession.note);
+      const mergedNote = mergeNotes(existing.note, importedSession.note);
+      if (mergedNote !== existing.note) {
+        existing.note = mergedNote;
+        sessionChanged = true;
+        result.updatedNotes += 1;
+      }
+    }
+
+    if (!sessionChanged) {
+      result.skippedSessions += 1;
     }
   });
 
   persistSessions();
   render();
+  return result;
 }
 
 function handleBulkImport() {
@@ -1022,9 +1052,9 @@ function handleBulkImport() {
     return;
   }
 
-  mergeImportedData({ meta: null, sessions: parsedSessions });
+  const result = mergeImportedData({ meta: null, sessions: parsedSessions });
   bulkInput.value = "";
-  alert(`导入完成：新增 ${parsedSessions.length} 条训练记录。`);
+  alert(buildImportSummaryMessage(result, "批量导入完成"));
 }
 
 function parseBulkTextToSessions(text, options = {}) {
@@ -1334,6 +1364,27 @@ function buildExerciseSignature(exercise) {
     (exercise.weight || "").trim(),
     normalizeReps(exercise.reps || "")
   ].join("|");
+}
+
+function dedupeExercises(exercises) {
+  const signatures = new Set();
+  const result = [];
+  exercises.forEach((exercise) => {
+    const signature = buildExerciseSignature(exercise);
+    if (!signatures.has(signature)) {
+      signatures.add(signature);
+      result.push(exercise);
+    }
+  });
+  return result;
+}
+
+function buildImportSummaryMessage(stats, title) {
+  if (stats.addedDays === 0 && stats.addedExercises === 0 && stats.updatedWeights === 0 && stats.updatedNotes === 0) {
+    return `${title}：没有新增，已跳过重复记录（跳过日期 ${stats.skippedSessions}，跳过动作 ${stats.skippedExercises}）。`;
+  }
+
+  return `${title}：新增日期 ${stats.addedDays} 天，新增动作 ${stats.addedExercises} 条，更新体重 ${stats.updatedWeights} 条，补充备注 ${stats.updatedNotes} 条，跳过重复动作 ${stats.skippedExercises} 条。`;
 }
 
 function mergeNotes(base, extra) {
