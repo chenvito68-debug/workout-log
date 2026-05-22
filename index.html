@@ -21,13 +21,18 @@
           <p>简单记录动作、重量和每组次数。</p>
         </div>
         <div class="topbar-actions">
-          <button class="icon-button" id="importJsonBtn" type="button" title="导入 JSON" aria-label="导入 JSON">
+          <label class="icon-button icon-upload" for="importFileInput" title="导入 JSON" aria-label="导入 JSON">
             <span aria-hidden="true">↑</span>
-          </button>
+          </label>
+          <input
+            id="importFileInput"
+            type="file"
+            accept=".json,application/json"
+            class="visually-hidden-file-input"
+          />
           <button class="icon-button" id="exportBtn" type="button" title="导出数据" aria-label="导出数据">
             <span aria-hidden="true">↓</span>
           </button>
-          <input id="importFileInput" type="file" accept=".json,application/json" hidden />
         </div>
       </header>
 
@@ -85,6 +90,13 @@
           <textarea id="bulkInput" rows="5" placeholder="9.13&#10;• 哑铃卧推25kg12&#10;• 30kg12+12+12+12"></textarea>
         </label>
         <div class="form-actions">
+          <label class="button-like" for="bulkFileInput">上传 txt/md</label>
+          <input
+            id="bulkFileInput"
+            type="file"
+            accept=".txt,.md,text/plain,text/markdown"
+            class="visually-hidden-file-input"
+          />
           <button id="bulkClearBtn" type="button">清空文本</button>
         </div>
       </section>

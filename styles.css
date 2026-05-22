@@ -31,6 +31,7 @@ textarea {
   font: inherit;
 }
 
+.button-like,
 button {
   border: 1px solid var(--line);
   background: #fff;
@@ -41,6 +42,15 @@ button {
   cursor: pointer;
 }
 
+.button-like,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.button-like:hover,
 button:hover {
   border-color: var(--brand);
 }
@@ -91,6 +101,23 @@ h2 {
   padding: 0;
   font-size: 22px;
   color: var(--brand);
+}
+
+.icon-upload {
+  position: relative;
+}
+
+.visually-hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(100%);
+  overflow: hidden;
 }
 
 .build-meta {

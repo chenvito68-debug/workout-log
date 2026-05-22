@@ -80,10 +80,10 @@ const weightTrendCanvas = document.querySelector("#weightTrendCanvas");
 const weightTrendHint = document.querySelector("#weightTrendHint");
 const appVersionText = document.querySelector("#appVersion");
 const appUpdatedAtText = document.querySelector("#appUpdatedAt");
-const importJsonBtn = document.querySelector("#importJsonBtn");
 const importFileInput = document.querySelector("#importFileInput");
 const bulkInput = document.querySelector("#bulkInput");
 const bulkImportBtn = document.querySelector("#bulkImportBtn");
+const bulkFileInput = document.querySelector("#bulkFileInput");
 const bulkClearBtn = document.querySelector("#bulkClearBtn");
 
 document.querySelector("#addExerciseBtn").addEventListener("click", () => addExerciseRow());
@@ -95,9 +95,9 @@ trackWeightToggle.addEventListener("change", handleWeightToggleChange);
 trackQuitToggle.addEventListener("change", handleQuitToggleChange);
 quitStartDateInput.addEventListener("change", handleQuitDateChange);
 window.addEventListener("resize", renderWeightTrend);
-importJsonBtn.addEventListener("click", () => importFileInput.click());
 importFileInput.addEventListener("change", handleImportFileChange);
 bulkImportBtn.addEventListener("click", handleBulkImport);
+bulkFileInput.addEventListener("change", handleBulkFileChange);
 bulkClearBtn.addEventListener("click", () => {
   bulkInput.value = "";
 });
@@ -792,6 +792,40 @@ function handleImportFileChange(event) {
   reader.onerror = () => {
     alert("导入失败：读取文件时出错。");
     importFileInput.value = "";
+  };
+  reader.readAsText(file, "utf-8");
+}
+
+function handleBulkFileChange(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = String(reader.result || "").trim();
+    if (!text) {
+      alert("上传文件为空，无法导入。");
+      bulkFileInput.value = "";
+      return;
+    }
+
+    bulkInput.value = text;
+    const parsedSessions = parseBulkTextToSessions(text);
+    if (!parsedSessions.length) {
+      alert("文件已读取，但没有解析到可导入记录。请检查文本格式。");
+      bulkFileInput.value = "";
+      return;
+    }
+
+    mergeImportedData({ meta: null, sessions: parsedSessions });
+    alert(`文件导入完成：新增 ${parsedSessions.length} 条训练记录。`);
+    bulkFileInput.value = "";
+  };
+  reader.onerror = () => {
+    alert("读取文件失败，请重试。");
+    bulkFileInput.value = "";
   };
   reader.readAsText(file, "utf-8");
 }
