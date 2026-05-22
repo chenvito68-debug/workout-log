@@ -87,6 +87,22 @@ h2 {
   color: var(--brand);
 }
 
+.build-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.build-meta span {
+  background: #fbfdfa;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

@@ -78,6 +78,8 @@ const weightField = document.querySelector("#weightField");
 const quitDateField = document.querySelector("#quitDateField");
 const weightTrendCanvas = document.querySelector("#weightTrendCanvas");
 const weightTrendHint = document.querySelector("#weightTrendHint");
+const appVersionText = document.querySelector("#appVersion");
+const appUpdatedAtText = document.querySelector("#appUpdatedAt");
 
 document.querySelector("#addExerciseBtn").addEventListener("click", () => addExerciseRow());
 document.querySelector("#clearFormBtn").addEventListener("click", resetForm);
@@ -92,6 +94,7 @@ window.addEventListener("resize", renderWeightTrend);
 setToday();
 hydrateOptionalState();
 addExerciseRow();
+renderBuildInfo();
 render();
 registerServiceWorker();
 
@@ -562,14 +565,59 @@ function registerServiceWorker() {
 }
 
 function getPageVersion() {
-  const modified = document.lastModified;
-  if (modified && modified !== "01/01/1970 00:00:00") {
-    const time = new Date(modified).getTime();
-    if (Number.isFinite(time) && time > 0) {
-      return String(time);
-    }
+  const timestamp = getPageTimestamp();
+  if (!timestamp) {
+    return "base";
   }
-  return String(Date.now());
+  return `v${formatVersionLabel(timestamp)}`;
+}
+
+function renderBuildInfo() {
+  if (!appVersionText || !appUpdatedAtText) {
+    return;
+  }
+  const timestamp = getPageTimestamp();
+  if (!timestamp) {
+    appVersionText.textContent = "版本：vbase";
+    appUpdatedAtText.textContent = "更新时间：未知";
+    return;
+  }
+
+  appVersionText.textContent = `版本：v${formatVersionLabel(timestamp)}`;
+  appUpdatedAtText.textContent = `更新时间：${formatUpdatedAt(timestamp)}`;
+}
+
+function getPageTimestamp() {
+  const modified = document.lastModified;
+  if (!modified || modified === "01/01/1970 00:00:00") {
+    return null;
+  }
+
+  const timestamp = Date.parse(modified);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return null;
+  }
+  return timestamp;
+}
+
+function formatVersionLabel(timestamp) {
+  const date = new Date(timestamp);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}-${hh}${min}`;
+}
+
+function formatUpdatedAt(timestamp) {
+  const date = new Date(timestamp);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
 function renderHistory(items) {
