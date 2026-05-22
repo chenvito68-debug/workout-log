@@ -554,9 +554,22 @@ function registerServiceWorker() {
   if (!location.protocol.startsWith("http")) {
     return;
   }
-  navigator.serviceWorker.register("./sw.js").catch(() => {
+  const pageVersion = getPageVersion();
+  const swUrl = `./sw.js?v=${encodeURIComponent(pageVersion)}`;
+  navigator.serviceWorker.register(swUrl).catch(() => {
     // Silent fail: app can still run without offline caching.
   });
+}
+
+function getPageVersion() {
+  const modified = document.lastModified;
+  if (modified && modified !== "01/01/1970 00:00:00") {
+    const time = new Date(modified).getTime();
+    if (Number.isFinite(time) && time > 0) {
+      return String(time);
+    }
+  }
+  return String(Date.now());
 }
 
 function renderHistory(items) {

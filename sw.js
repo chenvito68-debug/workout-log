@@ -1,4 +1,6 @@
-const CACHE_NAME = "workout-log-v2";
+const swUrl = new URL(self.location.href);
+const swVersion = swUrl.searchParams.get("v") || "base";
+const CACHE_NAME = `workout-log-${swVersion}`;
 const STATIC_ASSETS = [
   "./",
   "./index.html",
